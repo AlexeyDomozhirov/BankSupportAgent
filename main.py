@@ -1,5 +1,6 @@
-import requests
+import argparse
 import json
+import sys
 from agent import *
 from rich.console import Console
 from rich.panel import Panel
@@ -7,7 +8,7 @@ from rich.table import Table
 
 console = Console()
 
-def is_service_avaliable():
+def is_service_avaliable() -> bool:
     health_url = 'http://127.0.0.1:8000/health'
     try:
         avaliability = json.loads(requests.get(health_url).content)['status']
@@ -16,7 +17,7 @@ def is_service_avaliable():
     return True if avaliability == 'ok' else False
 
 
-def create_run():
+def create_run() -> str:
     url = 'http://127.0.0.1:8000/runs'
     headers = {
         'accept': 'application/json',
@@ -30,13 +31,13 @@ def create_run():
     return data['id']
 
 
-def get_case_id(case_number):
+def get_case_id(case_number: int) -> str:
     url = 'http://127.0.0.1:8000/cases/'
     cases = json.loads(requests.get(url).content)
     return cases[case_number]['id']
 
 
-def get_user_id(case_id):
+def get_user_id(case_id: str) -> str:
     url = 'http://127.0.0.1:8000/cases/' + case_id
     ticket_id = json.loads(requests.get(url, headers={'X-Case-Password': 'boss-cases'}).content)['intake']['ticket_id']
     ticket_url = 'http://127.0.0.1:8000/support/tickets/' + ticket_id
@@ -44,13 +45,13 @@ def get_user_id(case_id):
     return user_id
 
 
-def get_user_question(case_id):
+def get_user_question(case_id: str) -> str:
     url = 'http://127.0.0.1:8000/cases/' + case_id
     user_question = json.loads(requests.get(url, headers={'X-Case-Password': 'boss-cases'}).content)['customer_message']
     return user_question
 
 
-def evaluate_run(run_id, case_id, answer: str, evidence: list, actions: list):
+def evaluate_run(run_id: str, case_id: str, answer: str, evidence: list[str], actions: list[str]) -> None:
     url = 'http://127.0.0.1:8000/cases/' + case_id + '/evaluate'
     headers = {
         'accept': 'application/json',
@@ -68,19 +69,68 @@ def evaluate_run(run_id, case_id, answer: str, evidence: list, actions: list):
     requests.post(url, headers=headers, json=payload)
 
 
-def get_metrics(run_id):
+def get_metrics(run_id: str) -> dict[str, object]:
     url = 'http://127.0.0.1:8000/runs/' + run_id + '/metrics'
     metrics = json.loads(requests.get(url, headers={'X-Case-Password': 'boss-cases'}).content)
     return metrics
 
 
-def get_export(run_id):
+def get_export(run_id: str) -> dict[str, object]:
     url = 'http://127.0.0.1:8000/runs/' + run_id + '/export'
     export = json.loads(requests.get(url, headers={'X-Case-Password': 'boss-cases'}).content)
     return export
 
+def print_export_data(data: dict[str, object] | list[object] | str | int | float | bool, indent: int = 0) -> None:
+    """
+    Recursively prints nested data structures (dicts, lists) in a readable format.
+    """
+    indent_str = "  " * indent
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                console.print(f"{indent_str}[cyan]{key}:[/]")
+                print_export_data(value, indent + 1)
+            else:
+                console.print(f"{indent_str}[cyan]{key}:[/] [magenta]{value}[/]")
+    elif isinstance(data, list):
+        for index, item in enumerate(data):
+            if isinstance(item, (dict, list)):
+                console.print(f"{indent_str}[cyan][{index}][/]")
+                print_export_data(item, indent + 1)
+            else:
+                console.print(f"{indent_str}[cyan][{index}]:[/] [magenta]{item}[/]")
+    else:
+        console.print(f"{indent_str}[magenta]{data}[/]")
+
+
+class Tee:
+    """
+    A file-like object that writes to multiple streams.
+    """
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Run the agent on test cases.")
+    parser.add_argument('--log', type=str, help='Path to a file to log all console output.')
+    args = parser.parse_args()
+
+    original_stdout = sys.stdout
+    log_file = None
+
+    if args.log:
+        log_file = open(args.log, 'a', encoding='utf-8')
+        sys.stdout = Tee(original_stdout, log_file)
+
     if not is_service_avaliable():
         console.print('[bold red]Сервис в данный момент недоступен[/bold red]')
         exit()
@@ -110,20 +160,13 @@ if __name__ == '__main__':
         export = get_export(run_id)
 
         console.print('\n[bold]=== МЕТРИКИ ===[/bold]')
-        metrics_table = Table(title="Run Metrics")
-        metrics_table.add_column("Metric", style="cyan", no_wrap=True)
-        metrics_table.add_column("Value", style="magenta")
-        for key, value in metrics.items():
-            metrics_table.add_row(key, str(value))
-        console.print(metrics_table)
+        print_export_data(metrics)
 
         console.print('\n[bold]=== ЭКСПОРТ ДАННЫХ ===[/bold]')
-        export_table = Table(title="Run Export")
-        export_table.add_column("Key", style="cyan", no_wrap=True)
-        export_table.add_column("Value", style="magenta")
-        for key, value in export.items():
-            export_table.add_row(key, str(value))
-        console.print(export_table)
+        print_export_data(export)
 
         console.print('\n\n')
 
+    if log_file:
+        log_file.close()
+        sys.stdout = original_stdout
