@@ -130,11 +130,29 @@ class Tee:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the agent on test cases.")
+    parser = argparse.ArgumentParser(
+        description="Run the agent on test cases.",
+        epilog=(
+            "Примеры:\n"
+            "  python main.py                 # прогнать все кейсы (0-9)\n"
+            "  python main.py --cases 0 3 5   # прогнать только кейсы 0, 3 и 5\n"
+            "  python main.py --log run.log   # писать весь вывод в файл"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--log", type=str, help="Path to a file to log all console output."
     )
+    parser.add_argument(
+        "--cases",
+        nargs="+",
+        type=int,
+        metavar="N",
+        help="Номера кейсов для проверки, например: --cases 0 3 5. По умолчанию: 0-9.",
+    )
     args = parser.parse_args()
+
+    case_numbers = args.cases or range(10)
 
     original_stdout = sys.stdout
     log_file = None
@@ -147,8 +165,7 @@ if __name__ == "__main__":
         console.print("[bold red]Сервис в данный момент недоступен[/bold red]")
         exit()
 
-    case_number = 0
-    while case_number < 10:
+    for case_number in case_numbers:
         run_id = create_run()
         console.print(f"[bold cyan]Run_id:[/bold cyan] {run_id}")
 
@@ -163,7 +180,6 @@ if __name__ == "__main__":
         answer, evidence, actions = exec_agent(run_id, user_question, user_id)
 
         evaluate_run(run_id, case_id, answer, evidence, actions)
-        case_number += 1
 
         console.print("\n[bold]=== ОТВЕТ ПОЛЬЗОВАТЕЛЮ ===[/bold]")
         console.print(Panel(answer, title="Agent Answer", border_style="green"))
