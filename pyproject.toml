@@ -11,3 +11,8 @@ dependencies = [
     "langchain-gigachat>=0.5.1",
     "rich>=15.0.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.5",
+]
