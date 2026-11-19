@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-agent:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,28 +17,3 @@ jobs:
 
       - name: Check formatting with ruff
         run: uv run ruff format --check .
-
-      - name: Pull sandbox image
-        run: docker pull lapamore/bank-support-sandbox:latest
-
-      - name: Start sandbox
-        run: docker run -d --name bank-support-sandbox -p 8000:8000 lapamore/bank-support-sandbox:latest
-
-      - name: Wait for sandbox
-        run: |
-          for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/health > /dev/null; then
-              echo "Sandbox is ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Sandbox did not start in time" >&2
-          docker logs bank-support-sandbox
-          exit 1
-
-      - name: Run agent on case 1
-        env:
-          CERT_PATH: russian_trusted_root_ca_pem.crt
-          GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
-        run: uv run main.py --cases 1
