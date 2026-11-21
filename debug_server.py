@@ -3,7 +3,10 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from multiprocessing import get_context
+from multiprocessing.connection import Connection
 from pathlib import Path
+from queue import Queue
 from threading import Lock, Thread
 from time import monotonic
 from urllib.parse import urlsplit
@@ -12,10 +15,10 @@ from uuid import uuid4
 import requests
 
 FRONTEND = Path(__file__).resolve().parent / "frontend"
-RUN_LOCK = Lock()
 STATE_LOCK = Lock()
-RUN_HISTORY_LIMIT = 16
 LOGGER = logging.getLogger(__name__)
+PROCESS_CONTEXT = get_context("spawn")
+FINISHED_STATUSES = ("completed", "failed", "stopped")
 
 
 SANDBOX_URL = "http://127.0.0.1:8000"
@@ -93,25 +96,29 @@ def run_case(case_id: str, on_run_created: Callable[[str], None]) -> dict[str, o
 @dataclass
 class DashboardRun:
     case_id: str
+    title: str
+    status: str = "queued"
     run_id: str | None = None
     result: dict | None = None
     error: str | None = None
 
 
 RUNS: dict[str, DashboardRun] = {}
+RUN_QUEUE: Queue[DashboardRun] = Queue()
 
 
-def execute_run(job: DashboardRun) -> None:
-    def set_run_id(run_id: str) -> None:
-        with STATE_LOCK:
-            job.run_id = run_id
+def process_queue() -> None:
+    while True:
+        job = RUN_QUEUE.get()
+        try:
+            execute_run(job)
+        finally:
+            RUN_QUEUE.task_done()
 
-    result = None
-    error = None
-    start = monotonic()
+
+def run_in_process(case_id: str, channel: Connection) -> None:
     try:
-        result = run_case(job.case_id, set_run_id)
-        result["duration_ms"] = round((monotonic() - start) * 1000)
+        result = run_case(case_id, lambda run_id: channel.send(("run_id", run_id)))
     except requests.RequestException:
         LOGGER.error("Запрос к банковской песочнице завершился ошибкой")
         error = "Ошибка запроса к банковской песочнице."
@@ -123,26 +130,83 @@ def execute_run(job: DashboardRun) -> None:
             error = str(exc)
         else:
             error = "Не удалось обработать данные прогона."
-    except Exception:  # noqa: BLE001 — ошибка фонового задания передаётся интерфейсу
+    except Exception:  # noqa: BLE001 — ошибка дочернего процесса передаётся интерфейсу
         LOGGER.error("Прогон завершился ошибкой")
         error = "Не удалось завершить прогон. Проверьте настройки GigaChat и песочницы."
+    else:
+        channel.send(("result", result))
+        return
+    channel.send(("error", error))
+
+
+def execute_run(job: DashboardRun) -> None:
+    with STATE_LOCK:
+        if job.status == "stopped":
+            return
+        job.status = "running"
+
+    start = monotonic()
+    result = None
+    error = "Процесс прогона завершился без результата."
+    process = None
+    try:
+        receiver, sender = PROCESS_CONTEXT.Pipe(duplex=False)
+        with receiver, sender:
+            process = PROCESS_CONTEXT.Process(
+                target=run_in_process, args=(job.case_id, sender), daemon=True
+            )
+            process.start()
+            sender.close()
+            while True:
+                with STATE_LOCK:
+                    if job.status == "stopping":
+                        break
+                if not receiver.poll(0.1):
+                    if not process.is_alive():
+                        break
+                    continue
+                kind, payload = receiver.recv()
+                if kind == "run_id":
+                    with STATE_LOCK:
+                        job.run_id = payload
+                    continue
+                if kind == "result":
+                    result = payload
+                    result["duration_ms"] = round((monotonic() - start) * 1000)
+                    error = None
+                else:
+                    error = payload
+                break
+    except EOFError:
+        pass
+    except OSError, RuntimeError:
+        LOGGER.error("Не удалось запустить или прочитать процесс прогона.")
+        error = "Не удалось выполнить прогон в отдельном процессе."
     finally:
+        if process is not None:
+            if process.pid is not None:
+                if result is not None:
+                    process.join(timeout=0.5)
+                if process.is_alive():
+                    process.kill()
+                process.join()
+            process.close()
+
         with STATE_LOCK:
-            job.result = result
-            job.error = error
-            RUN_LOCK.release()
+            if job.status == "stopping":
+                job.status = "stopped"
+            else:
+                job.result = result
+                job.error = error
+                job.status = "failed" if error else "completed"
 
 
 def run_snapshot(job: DashboardRun) -> dict:
     with STATE_LOCK:
-        run_id, result, error = job.run_id, job.result, job.error
+        status, run_id, result, error = job.status, job.run_id, job.result, job.error
 
     snapshot = {
-        "status": "failed"
-        if error
-        else "completed"
-        if result is not None
-        else "running",
+        "status": status,
         "run_id": run_id,
         "result": result,
         "error": error,
@@ -157,6 +221,18 @@ def run_snapshot(job: DashboardRun) -> dict:
     except requests.RequestException:
         snapshot["trace_error"] = "Журнал временно недоступен."
     return snapshot
+
+
+def run_summaries() -> list[dict]:
+    return [
+        {
+            "job_id": job_id,
+            "case_id": job.case_id,
+            "title": job.title,
+            "status": job.status,
+        }
+        for job_id, job in RUNS.items()
+    ]
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -174,6 +250,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path == "/api/runs":
+            with STATE_LOCK:
+                runs = run_summaries()
+            self.send_json(200, runs)
+            return
+
         if path.startswith("/api/runs/"):
             job_id = path.removeprefix("/api/runs/")
             with STATE_LOCK:
@@ -198,6 +280,34 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             [{key: case[key] for key in ("id", "title")} for case in cases],
         )
 
+    def do_DELETE(self):
+        path = urlsplit(self.path).path
+        if path == "/api/runs/active":
+            with STATE_LOCK:
+                for job in RUNS.values():
+                    if job.status == "queued":
+                        job.status = "stopped"
+                    elif job.status == "running":
+                        job.status = "stopping"
+                runs = run_summaries()
+            self.send_json(200, runs)
+            return
+
+        if path != "/api/runs":
+            self.send_json(404, {"error": "Маршрут не найден."})
+            return
+
+        with STATE_LOCK:
+            finished = [
+                job_id
+                for job_id, job in RUNS.items()
+                if job.status in FINISHED_STATUSES
+            ]
+            for job_id in finished:
+                del RUNS[job_id]
+            runs = run_summaries()
+        self.send_json(200, runs)
+
     def do_POST(self):
         if urlsplit(self.path).path != "/api/runs":
             self.send_json(404, {"error": "Маршрут не найден."})
@@ -211,49 +321,42 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not 0 < length <= 4096:
                 raise ValueError
             data = json.loads(self.rfile.read(length))
-            case_id = data["case_id"]
-            if not isinstance(case_id, str) or not case_id:
+            if not isinstance(data, dict):
+                raise TypeError
+            case_ids = data["case_ids"] if "case_ids" in data else [data["case_id"]]
+            if not isinstance(case_ids, list) or not case_ids:
+                raise ValueError
+            if not all(isinstance(case_id, str) and case_id for case_id in case_ids):
                 raise ValueError
         except ValueError, KeyError, TypeError:
             self.send_json(
-                400, {"error": "Передайте идентификатор кейса в поле case_id."}
+                400, {"error": "Передайте непустой список идентификаторов в case_ids."}
             )
             return
 
         try:
-            cases = get_cases()
+            cases = {case["id"]: case["title"] for case in get_cases()}
         except requests.RequestException:
             self.send_json(502, {"error": "Не удалось загрузить кейсы из песочницы."})
             return
-        if not any(case["id"] == case_id for case in cases):
+        if any(case_id not in cases for case_id in case_ids):
             self.send_json(404, {"error": "Кейс не найден."})
             return
 
-        if not RUN_LOCK.acquire(blocking=False):
-            self.send_json(409, {"error": "Другой кейс уже выполняется."})
-            return
-
-        job_id = uuid4().hex
-        job = DashboardRun(case_id)
+        job_ids = []
         with STATE_LOCK:
-            if len(RUNS) >= RUN_HISTORY_LIMIT:
-                RUNS.pop(next(iter(RUNS)))
-            RUNS[job_id] = job
-
-        worker = Thread(target=execute_run, args=(job,), daemon=True)
-        try:
-            worker.start()
-        except RuntimeError:
-            with STATE_LOCK:
-                RUNS.pop(job_id)
-                RUN_LOCK.release()
-            self.send_json(503, {"error": "Не удалось запустить кейс."})
-            return
-        self.send_json(202, {"job_id": job_id})
+            for case_id in case_ids:
+                job_id = uuid4().hex
+                job = DashboardRun(case_id, cases[case_id])
+                RUNS[job_id] = job
+                RUN_QUEUE.put(job)
+                job_ids.append(job_id)
+        self.send_json(202, {"job_ids": job_ids, "job_id": job_ids[0]})
 
 
 if __name__ == "__main__":
     with ThreadingHTTPServer(("127.0.0.1", 8080), DashboardHandler) as server:
+        Thread(target=process_queue, daemon=True).start()
         print("Панель прогонов: http://127.0.0.1:8080", flush=True)
         try:
             server.serve_forever()
