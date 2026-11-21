@@ -16,6 +16,9 @@
   --header-end: #dcedff;
   --on-primary: #ffffff;
   --focus: #285bc4;
+  --toggle-bg: #5b3db30a;
+  --toggle-hover: #5b3db317;
+  --toggle-border: #5b3db32b;
 
   font: 105%/1.5 "Inter", system-ui, sans-serif;
   color: var(--text);
@@ -23,6 +26,29 @@
 }
 
 * { box-sizing: border-box; }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --text: #eeeaff;
+  --surface-subtle: #192947;
+  --result-tint: #30244b;
+  --border: #423a60;
+  --accent-text: #d6bcff;
+  --input-border: #8276a6;
+  --primary: #c4a9ff;
+  --primary-hover: #d8c4ff;
+  --muted: #c1bbd7;
+  --error: #ff9bb5;
+  --page: #151222;
+  --surface: #201b32;
+  --header-start: #35244f;
+  --header-end: #1c3453;
+  --on-primary: #24143e;
+  --focus: #9bc5ff;
+  --toggle-bg: #d6bcff0d;
+  --toggle-hover: #d6bcff1c;
+  --toggle-border: #d6bcff33;
+}
 
 body { margin: 0; }
 
@@ -81,7 +107,12 @@ select, button {
   font: inherit;
 }
 
-select { width: 100%; border: 1px solid var(--input-border); background: var(--surface); }
+select {
+  width: 100%;
+  border: 1px solid var(--input-border);
+  background: var(--surface);
+  color: var(--text);
+}
 
 button {
   border: 1px solid var(--primary);
@@ -93,6 +124,19 @@ button {
 
 button:disabled { opacity: 0.6; cursor: default; }
 button:hover:enabled { background: var(--primary-hover); }
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  margin: 1rem 0 0 1rem;
+  border-color: var(--toggle-border);
+  background: var(--toggle-bg);
+}
+
+.theme-toggle svg { transform: translateY(0.5px); }
+.theme-toggle:hover:enabled { background: var(--toggle-hover); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 
 #status { margin: 0.75rem 0 0; color: var(--muted); }
