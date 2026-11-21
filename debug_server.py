@@ -1,15 +1,20 @@
 import json
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from time import monotonic
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import requests
 
 FRONTEND = Path(__file__).resolve().parent / "frontend"
 RUN_LOCK = Lock()
+STATE_LOCK = Lock()
+RUN_HISTORY_LIMIT = 16
 LOGGER = logging.getLogger(__name__)
 
 
@@ -61,13 +66,14 @@ def get_export(run_id: str) -> dict[str, object]:
     return sandbox_json("GET", f"/runs/{run_id}/export", headers=CASE_HEADERS)
 
 
-def run_case(case_id: str) -> dict[str, object]:
+def run_case(case_id: str, on_run_created: Callable[[str], None]) -> dict[str, object]:
     from agent import exec_agent
 
     case = sandbox_json("GET", f"/cases/{case_id}", headers=CASE_HEADERS)
     user_id = get_user_id(case)
     question = case["customer_message"]
     run_id = create_run()
+    on_run_created(run_id)
 
     answer, evidence, actions = exec_agent(run_id, question, user_id)
     evaluation = evaluate_run(run_id, case_id, answer, evidence, actions)
@@ -84,6 +90,75 @@ def run_case(case_id: str) -> dict[str, object]:
     }
 
 
+@dataclass
+class DashboardRun:
+    case_id: str
+    run_id: str | None = None
+    result: dict | None = None
+    error: str | None = None
+
+
+RUNS: dict[str, DashboardRun] = {}
+
+
+def execute_run(job: DashboardRun) -> None:
+    def set_run_id(run_id: str) -> None:
+        with STATE_LOCK:
+            job.run_id = run_id
+
+    result = None
+    error = None
+    start = monotonic()
+    try:
+        result = run_case(job.case_id, set_run_id)
+        result["duration_ms"] = round((monotonic() - start) * 1000)
+    except requests.RequestException:
+        LOGGER.error("Запрос к банковской песочнице завершился ошибкой")
+        error = "Ошибка запроса к банковской песочнице."
+    except ValueError as exc:
+        if str(exc) in (
+            "GIGACHAT_CREDENTIALS not set",
+            "Переменная окружения CERT_PATH не установлена",
+        ):
+            error = str(exc)
+        else:
+            error = "Не удалось обработать данные прогона."
+    except Exception:  # noqa: BLE001 — ошибка фонового задания передаётся интерфейсу
+        LOGGER.error("Прогон завершился ошибкой")
+        error = "Не удалось завершить прогон. Проверьте настройки GigaChat и песочницы."
+    finally:
+        with STATE_LOCK:
+            job.result = result
+            job.error = error
+            RUN_LOCK.release()
+
+
+def run_snapshot(job: DashboardRun) -> dict:
+    with STATE_LOCK:
+        run_id, result, error = job.run_id, job.result, job.error
+
+    snapshot = {
+        "status": "failed"
+        if error
+        else "completed"
+        if result is not None
+        else "running",
+        "run_id": run_id,
+        "result": result,
+        "error": error,
+        "tool_calls": [],
+    }
+    if run_id is None:
+        return snapshot
+
+    try:
+        export = result["export"] if result is not None else get_export(run_id)
+        snapshot["tool_calls"] = export.get("tool_calls", [])
+    except requests.RequestException:
+        snapshot["trace_error"] = "Журнал временно недоступен."
+    return snapshot
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=FRONTEND, **kwargs)
@@ -98,7 +173,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if urlsplit(self.path).path != "/api/cases":
+        path = urlsplit(self.path).path
+        if path.startswith("/api/runs/"):
+            job_id = path.removeprefix("/api/runs/")
+            with STATE_LOCK:
+                job = RUNS.get(job_id)
+            if job is None:
+                self.send_json(404, {"error": "Прогон не найден."})
+            else:
+                self.send_json(200, run_snapshot(job))
+            return
+
+        if path != "/api/cases":
             super().do_GET()
             return
 
@@ -134,53 +220,36 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             )
             return
 
+        try:
+            cases = get_cases()
+        except requests.RequestException:
+            self.send_json(502, {"error": "Не удалось загрузить кейсы из песочницы."})
+            return
+        if not any(case["id"] == case_id for case in cases):
+            self.send_json(404, {"error": "Кейс не найден."})
+            return
+
         if not RUN_LOCK.acquire(blocking=False):
             self.send_json(409, {"error": "Другой кейс уже выполняется."})
             return
 
+        job_id = uuid4().hex
+        job = DashboardRun(case_id)
+        with STATE_LOCK:
+            if len(RUNS) >= RUN_HISTORY_LIMIT:
+                RUNS.pop(next(iter(RUNS)))
+            RUNS[job_id] = job
+
+        worker = Thread(target=execute_run, args=(job,), daemon=True)
         try:
-            self.run_selected_case(case_id)
-        finally:
-            RUN_LOCK.release()
-
-    def run_selected_case(self, case_id):
-        try:
-            cases = get_cases()
-            if not any(case["id"] == case_id for case in cases):
-                self.send_json(404, {"error": "Кейс не найден."})
-                return
-            start = monotonic()
-            result = run_case(case_id)
-            result["duration_ms"] = round((monotonic() - start) * 1000)
-        except requests.RequestException:
-            LOGGER.error("Запрос к банковской песочнице завершился ошибкой")
-            self.send_json(502, {"error": "Ошибка запроса к банковской песочнице."})
+            worker.start()
+        except RuntimeError:
+            with STATE_LOCK:
+                RUNS.pop(job_id)
+                RUN_LOCK.release()
+            self.send_json(503, {"error": "Не удалось запустить кейс."})
             return
-        except ValueError as error:
-            if str(error) in (
-                "GIGACHAT_CREDENTIALS not set",
-                "Переменная окружения CERT_PATH не установлена",
-            ):
-                self.send_json(503, {"error": str(error)})
-                return
-            self.send_run_error()
-            return
-        except Exception:  # noqa: BLE001 — граница HTTP, детали остаются на сервере
-            self.send_run_error()
-            return
-
-        self.send_json(200, result)
-
-    def send_run_error(self):
-        LOGGER.error(
-            "Прогон завершился ошибкой; проверьте конфигурацию и доступность сервисов"
-        )
-        self.send_json(
-            500,
-            {
-                "error": "Не удалось завершить прогон. Проверьте настройки GigaChat и песочницы."
-            },
-        )
+        self.send_json(202, {"job_id": job_id})
 
 
 if __name__ == "__main__":

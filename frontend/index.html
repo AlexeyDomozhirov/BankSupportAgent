@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Прохождения кейсов · Банковская поддержка</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&amp;display=swap">
-  <link rel="stylesheet" href="styles.css?v=2">
-  <script type="module" src="app.js"></script>
+  <link rel="stylesheet" href="styles.css?v=5">
+  <script type="module" src="app.js?v=2"></script>
 </head>
 <body>
   <button class="theme-toggle" id="theme-toggle" type="button"
@@ -72,6 +72,19 @@
       </form>
       <button id="reload-cases" type="button" hidden>Обновить список кейсов</button>
       <p id="status" role="status">Загружаем список кейсов…</p>
+    </section>
+
+    <section class="card" id="tool-log" aria-labelledby="tool-log-title" hidden>
+      <h2 id="tool-log-title">Журнал инструментов</h2>
+      <p id="tool-log-status" role="status"></p>
+      <div class="tool-log-scroll" tabindex="0" role="region" aria-label="Вызовы инструментов">
+        <table class="tool-calls">
+          <thead>
+            <tr><th scope="col">Метод</th><th scope="col">Путь</th><th scope="col">HTTP</th><th scope="col">Время</th></tr>
+          </thead>
+          <tbody id="tool-calls"></tbody>
+        </table>
+      </div>
     </section>
 
     <section class="card" id="result" aria-labelledby="result-title" hidden>
