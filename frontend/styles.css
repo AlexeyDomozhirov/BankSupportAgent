@@ -68,6 +68,13 @@ body { margin: 0; }
   padding: 0.75rem clamp(1rem, 3vw, 1.6rem);
 }
 
+@media (max-width: 77rem) {
+  .page-header .container {
+    width: auto;
+    margin-inline: 4.5rem 1rem;
+  }
+}
+
 .page-header p { margin: 0.35rem 0 0; }
 
 .product {
@@ -125,12 +132,14 @@ button {
 button:disabled { opacity: 0.6; cursor: default; }
 button:hover:enabled { background: var(--primary-hover); }
 .theme-toggle {
+  position: absolute;
+  inset-block-start: 1rem;
+  inset-inline-start: 1rem;
   display: grid;
   place-items: center;
   width: 2.75rem;
   height: 2.75rem;
   padding: 0;
-  margin: 1rem 0 0 1rem;
   border-color: var(--toggle-border);
   background: var(--toggle-bg);
 }
@@ -141,6 +150,35 @@ button:hover:enabled { background: var(--primary-hover); }
 
 #status { margin: 0.75rem 0 0; color: var(--muted); }
 #status[data-state="error"] { color: var(--error); }
+
+.tool-log-scroll {
+  max-height: 18rem;
+  overflow: auto;
+  overscroll-behavior-y: contain;
+}
+#tool-log-status { margin: 0 0 0.75rem; color: var(--muted); }
+
+.tool-calls {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.tool-calls th, .tool-calls td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.tool-calls th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-subtle);
+}
+
+.tool-calls td:nth-child(2) { overflow-wrap: anywhere; }
+.tool-calls td:last-child { white-space: nowrap; }
+.tool-calls tr[data-http-error] td:nth-child(3) { color: var(--error); font-weight: 700; }
 
 .run-info, .result-grid {
   display: grid;
