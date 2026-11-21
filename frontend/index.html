@@ -21,13 +21,12 @@
       <form id="run-form">
         <div class="field">
           <label for="case">Кейс</label>
-          <select id="case" name="case">
-            <option value="duplicate-charge">Двойное списание (демо)</option>
-          </select>
+          <select id="case" name="case" disabled></select>
         </div>
         <button id="run" type="submit" disabled>Запустить</button>
       </form>
-      <p id="status" role="status">Готово к запуску.</p>
+      <button id="reload-cases" type="button" hidden>Обновить список кейсов</button>
+      <p id="status" role="status">Загружаем список кейсов…</p>
     </section>
 
     <section class="card" id="result" aria-labelledby="result-title" hidden>
