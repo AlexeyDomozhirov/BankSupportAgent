@@ -102,7 +102,9 @@ def run_agent(case_id: str, question: str) -> CaseReport:
 def _prune_jobs() -> None:
     if len(JOBS) <= MAX_JOBS:
         return
-    for job_id in sorted(JOBS, key=lambda key: JOBS[key]["created_at"])[: len(JOBS) - MAX_JOBS]:
+    for job_id in sorted(JOBS, key=lambda key: JOBS[key]["created_at"])[
+        : len(JOBS) - MAX_JOBS
+    ]:
         JOBS.pop(job_id, None)
 
 
@@ -141,7 +143,9 @@ def _fail_job(job_id: str, message: str) -> None:
     update_job(job_id, status="error", stage="ошибка", error=message)
 
 
-def _job_worker(job_id: str, session_id: str, case_id: str | None, message: str) -> None:
+def _job_worker(
+    job_id: str, session_id: str, case_id: str | None, message: str
+) -> None:
     try:
         with STATE_LOCK:
             session = SESSIONS.get(session_id)
@@ -155,7 +159,9 @@ def _job_worker(job_id: str, session_id: str, case_id: str | None, message: str)
             _fail_job(job_id, "Не выбрано обращение.")
             return
 
-        update_job(job_id, status="running", stage="запускаю расследование по обращению…")
+        update_job(
+            job_id, status="running", stage="запускаю расследование по обращению…"
+        )
         report = run_agent(case_id, message)
 
         update_job(job_id, stage="готовлю ответ…")
@@ -170,7 +176,10 @@ def _job_worker(job_id: str, session_id: str, case_id: str | None, message: str)
         _finish_job(job_id, answer, "report")
     except Exception:
         LOGGER.exception("Задача %s завершилась ошибкой", job_id)
-        _fail_job(job_id, "Не удалось получить ответ. Проверьте песочницу и настройки GigaChat.")
+        _fail_job(
+            job_id,
+            "Не удалось получить ответ. Проверьте песочницу и настройки GigaChat.",
+        )
 
 
 def start_job(session_id: str, case_id: str | None, message: str) -> str:
@@ -260,7 +269,10 @@ class ChatHandler(SimpleHTTPRequestHandler):
             self.send_json(404, {"error": "Задача не найдена."})
             return
 
-        if job["status"] != "done" and time.time() - job["created_at"] > JOB_TIMEOUT_SECONDS:
+        if (
+            job["status"] != "done"
+            and time.time() - job["created_at"] > JOB_TIMEOUT_SECONDS
+        ):
             _fail_job(job_id, "Превышено время ожидания ответа.")
             job = get_job(job_id) or job
 
@@ -310,7 +322,9 @@ class ChatHandler(SimpleHTTPRequestHandler):
             try:
                 available = {case["id"] for case in list_cases()}
             except requests.RequestException:
-                self.send_json(502, {"error": "Песочница недоступна. Запустите контейнер."})
+                self.send_json(
+                    502, {"error": "Песочница недоступна. Запустите контейнер."}
+                )
                 return
             if case_id not in available:
                 self.send_json(404, {"error": "Обращение не найдено."})

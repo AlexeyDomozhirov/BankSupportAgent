@@ -64,7 +64,9 @@ def _get_model() -> GigaChat:
             raise RuntimeError("Переменная окружения CERT_PATH не установлена")
         credentials = os.getenv("GIGACHAT_CREDENTIALS")
         if not credentials:
-            raise RuntimeError("Переменная окружения GIGACHAT_CREDENTIALS не установлена")
+            raise RuntimeError(
+                "Переменная окружения GIGACHAT_CREDENTIALS не установлена"
+            )
 
         _model = GigaChat(
             credentials=credentials,
@@ -107,7 +109,10 @@ def _sanitize(text: str) -> str:
 
 
 def _looks_broken(text: str) -> bool:
-    return any(token in text for token in ("{", "}", "```", "refund_for", "reversal_for", "dispute_opened"))
+    return any(
+        token in text
+        for token in ("{", "}", "```", "refund_for", "reversal_for", "dispute_opened")
+    )
 
 
 @dataclass(frozen=True)

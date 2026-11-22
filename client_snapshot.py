@@ -164,7 +164,7 @@ def _money(value, currency: str = "RUB") -> str:
 def _number(value):
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -231,7 +231,9 @@ def _card_lines(payload) -> list[str] | None:
             if item.get("contactless_enabled")
             else "бесконтактная оплата отключена"
         )
-        lines.append("- " + _parts(_parts(product, pan), status, limit_text, contactless))
+        lines.append(
+            "- " + _parts(_parts(product, pan), status, limit_text, contactless)
+        )
     return lines
 
 
@@ -253,7 +255,10 @@ def _limit_lines(payload) -> list[str] | None:
         if used is not None:
             line = _parts(line, f"использовано {_money(used, item.get('currency'))}")
             if total is not None:
-                line = _parts(line, f"осталось {_money(max(total - used, 0), item.get('currency'))}")
+                line = _parts(
+                    line,
+                    f"осталось {_money(max(total - used, 0), item.get('currency'))}",
+                )
 
         lines.append("- " + line)
     return lines
@@ -357,7 +362,10 @@ def _loan_lines(payload) -> list[str] | None:
     lines = []
     for item in items[:MAX_LOANS]:
         kind = _clean(
-            item.get("loan_type") or item.get("product") or item.get("type") or "кредит",
+            item.get("loan_type")
+            or item.get("product")
+            or item.get("type")
+            or "кредит",
             40,
         )
         outstanding = _money(
@@ -391,7 +399,12 @@ def build_snapshot(base_url: str, user_id: str) -> str:
         ("Счета", f"/users/{user_id}/accounts", _account_lines, "счетов нет"),
         ("Карты", f"/users/{user_id}/cards", _card_lines, "карт нет"),
         ("Лимиты", f"/users/{user_id}/limits", _limit_lines, "ограничений нет"),
-        ("Подписки", f"/users/{user_id}/subscriptions", _subscription_lines, "подписок нет"),
+        (
+            "Подписки",
+            f"/users/{user_id}/subscriptions",
+            _subscription_lines,
+            "подписок нет",
+        ),
         ("", f"/users/{user_id}/transactions", _transaction_lines, "операций нет"),
         ("Возвраты", f"/users/{user_id}/refunds", _refund_lines, "возвратов нет"),
         ("Споры", f"/users/{user_id}/disputes", _dispute_lines, "споров нет"),
