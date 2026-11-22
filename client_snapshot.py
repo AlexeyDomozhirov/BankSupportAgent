@@ -121,7 +121,7 @@ def _fetch(base_url: str, path: str):
         response = requests.get(base_url + path, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.json()
-    except (requests.RequestException, ValueError):
+    except requests.RequestException, ValueError:
         return None
 
 
@@ -149,7 +149,7 @@ def _parts(*values) -> str:
 def _money(value, currency: str = "RUB") -> str:
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return ""
 
     text = f"{number:,.2f}".replace(",", "\u00a0").replace(".", ",")

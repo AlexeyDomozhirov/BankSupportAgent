@@ -330,7 +330,7 @@ class ChatHandler(SimpleHTTPRequestHandler):
             return None
         try:
             data = json.loads(self.rfile.read(length))
-        except (ValueError, UnicodeDecodeError):
+        except ValueError, UnicodeDecodeError:
             self.send_json(400, {"error": "Некорректный JSON."})
             return None
         if not isinstance(data, dict):
