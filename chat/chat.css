@@ -77,6 +77,20 @@ button:disabled { opacity: 0.6; cursor: default; }
 button:hover:enabled { background: var(--primary-hover); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 
+button.ghost {
+  min-height: 2.25rem;
+  padding: 0.3rem 0.7rem;
+  border-color: var(--input-border);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+button.ghost:hover:enabled {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -102,6 +116,7 @@ button:hover:enabled { background: var(--primary-hover); }
 
 .chat-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.8rem;
   padding: 0.85rem clamp(1rem, 3vw, 1.6rem);
@@ -120,6 +135,8 @@ button:hover:enabled { background: var(--primary-hover); }
   color: var(--on-primary);
   font-weight: 700;
 }
+
+.chat-peer { flex: 1 1 12rem; min-width: 0; }
 
 .chat-head h2 { margin: 0; font-size: 1.1rem; }
 
@@ -141,6 +158,28 @@ button:hover:enabled { background: var(--primary-hover); }
 }
 
 .chat-status[data-state="typing"]::before { background: var(--accent-text); }
+
+.case-picker {
+  display: grid;
+  gap: 0.15rem;
+  margin-left: auto;
+  max-width: 100%;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.case-picker span { font-weight: 600; }
+
+.case-picker select {
+  min-height: 2.25rem;
+  max-width: 18rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--input-border);
+  border-radius: 0.6rem;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
 
 .chat-log {
   display: flex;
@@ -244,12 +283,29 @@ button:hover:enabled { background: var(--primary-hover); }
 .chat-form textarea:focus { border-color: var(--focus); }
 .chat-form button { flex: none; }
 
+.chat-note-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
 .chat-note {
-  margin: 0.6rem 0 0;
+  margin: 0;
   font-size: 0.8rem;
   color: var(--muted);
 }
 
+.chat-note[data-state="error"] { color: var(--error); }
+
 @media (prefers-reduced-motion: reduce) {
   .msg__bubble--typing .dot { animation: none; }
+}
+
+@media (max-width: 34rem) {
+  .case-picker { width: 100%; margin-left: 0; }
+  .case-picker select { max-width: none; width: 100%; }
+  .msg { max-width: 92%; }
 }

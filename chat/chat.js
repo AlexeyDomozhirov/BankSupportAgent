@@ -3,17 +3,27 @@ const form = document.querySelector("#chat-form");
 const input = document.querySelector("#chat-input");
 const sendButton = document.querySelector("#chat-send");
 const status = document.querySelector("#chat-status");
+const note = document.querySelector("#chat-note");
+const caseSelect = document.querySelector("#case-select");
+const resetButton = document.querySelector("#chat-reset");
 
-const replies = [
-  "Спасибо, сообщение получил. Это демонстрационный ответ: логика ассистента ещё не подключена.",
-  "Принял. Пока я работаю в демонстрационном режиме и отвечаю заглушками.",
-  "Записал обращение. В рабочей версии здесь появится разбор операций и рекомендации по вашему случаю.",
-];
+const POLL_INTERVAL_MS = 900;
+const POLL_TIMEOUT_MS = 6 * 60 * 1000;
+const DEFAULT_NOTE = "Выберите обращение и отправьте сообщение.";
+const FOLLOWUP_NOTE = "Ассистент отвечает по выбранному обращению.";
 
 const timeFormat = new Intl.DateTimeFormat("ru", { hour: "2-digit", minute: "2-digit" });
 
-let replyIndex = 0;
-let pending = false;
+const welcomeTemplate = log.firstElementChild.cloneNode(true);
+let cases = [];
+let sessionId = newId();
+let started = false;
+let busy = false;
+
+function newId() {
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+  return `s-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 function timeNow() {
   return timeFormat.format(new Date());
@@ -24,6 +34,7 @@ function scrollToEnd() {
 }
 
 function stamp(row) {
+  if (!row.classList.contains("msg") || row.querySelector(".msg__time")) return;
   const time = document.createElement("time");
   time.className = "msg__time";
   time.textContent = timeNow();
@@ -73,42 +84,167 @@ function resizeInput() {
   input.style.height = `${Math.min(input.scrollHeight, 128)}px`;
 }
 
-function syncState() {
-  sendButton.disabled = pending || input.value.trim() === "";
+function setStatus(text, state) {
+  status.textContent = text;
+  if (state) {
+    status.dataset.state = state;
+  } else {
+    delete status.dataset.state;
+  }
 }
 
-function startReply() {
-  pending = true;
-  status.textContent = "печатает…";
-  status.dataset.state = "typing";
+function setNote(text, state) {
+  note.textContent = text;
+  if (state) {
+    note.dataset.state = state;
+  } else {
+    delete note.dataset.state;
+  }
+}
+
+function syncState() {
+  const hasText = input.value.trim() !== "";
+  const hasCase = started || caseSelect.value !== "";
+  sendButton.disabled = busy || !hasText || !hasCase;
+}
+
+async function requestJson(url, options) {
+  const response = await fetch(url, options);
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    // ответ не JSON - ниже отдадим ошибку по статусу
+  }
+  if (!response.ok) {
+    throw new Error(data?.error || `Ошибка HTTP ${response.status}.`);
+  }
+  return data;
+}
+
+async function loadCases() {
+  try {
+    const data = await requestJson("/api/cases");
+    cases = data.cases || [];
+    if (!cases.length) throw new Error("В песочнице нет доступных обращений.");
+
+    caseSelect.replaceChildren(...cases.map((item) => new Option(item.title, item.id)));
+    caseSelect.disabled = false;
+    setNote(DEFAULT_NOTE);
+  } catch (error) {
+    caseSelect.replaceChildren(new Option("Недоступно", ""));
+    caseSelect.disabled = true;
+    setNote(`Не удалось загрузить обращения. ${error.message}`, "error");
+  }
+  syncState();
+}
+
+function prefillCase() {
+  if (input.value.trim() !== "") return;
+  const current = cases.find((item) => item.id === caseSelect.value);
+  if (!current || !current.customer_message) return;
+  input.value = current.customer_message;
+  resizeInput();
+  syncState();
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function pollJob(jobId) {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    await wait(POLL_INTERVAL_MS);
+    const data = await requestJson(`/api/chat/${jobId}`);
+
+    if (data.status === "error") {
+      throw new Error(data.error || "Не удалось получить ответ.");
+    }
+    if (data.status === "done") {
+      return data;
+    }
+    if (data.stage) {
+      setNote(data.stage);
+    }
+  }
+
+  throw new Error("Превышено время ожидания ответа.");
+}
+
+async function sendMessage(text) {
+  const caseId = started ? null : caseSelect.value;
+
+  busy = true;
+  caseSelect.disabled = true;
+  syncState();
+
+  addMessage(text, "user");
+  input.value = "";
+  resizeInput();
   syncState();
 
   const typing = addTyping();
-  const delay = 700 + Math.random() * 700;
+  setStatus("печатает…", "typing");
+  setNote(started ? "Ассистент готовит ответ…" : "Запускаю расследование по обращению…");
 
-  window.setTimeout(() => {
+  try {
+    const data = await requestJson("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, case_id: caseId, message: text }),
+    });
+
+    const result = await pollJob(data.job_id);
     typing.remove();
-    addMessage(replies[replyIndex % replies.length], "bot");
-    replyIndex += 1;
-    pending = false;
-    status.textContent = "на связи";
-    delete status.dataset.state;
+    addMessage(result.answer, "bot");
+    started = true;
+    setStatus("на связи");
+    setNote(FOLLOWUP_NOTE);
+  } catch (error) {
+    typing.remove();
+    setStatus("на связи");
+    setNote(error.message, "error");
+  } finally {
+    busy = false;
+    caseSelect.disabled = started;
     syncState();
     input.focus();
-  }, delay);
+  }
+}
+
+function resetChat() {
+  sessionId = newId();
+  started = false;
+  busy = false;
+
+  log.replaceChildren(welcomeTemplate.cloneNode(true));
+  log.querySelectorAll(".msg").forEach(stamp);
+
+  input.value = "";
+  resizeInput();
+  caseSelect.disabled = cases.length === 0;
+  setStatus("на связи");
+  setNote(cases.length ? DEFAULT_NOTE : "Список обращений недоступен.");
+  syncState();
+  input.focus();
 }
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
 
   const text = input.value.trim();
-  if (text === "" || pending) return;
+  if (text === "" || busy) return;
 
-  addMessage(text, "user");
-  input.value = "";
-  resizeInput();
-  syncState();
-  startReply();
+  if (!started && caseSelect.value === "") {
+    setNote("Сначала выберите обращение.", "error");
+    return;
+  }
+
+  sendMessage(text);
 });
 
 input.addEventListener("input", () => {
@@ -123,9 +259,9 @@ input.addEventListener("keydown", (event) => {
   }
 });
 
-document.querySelectorAll(".msg").forEach((row) => {
-  if (!row.querySelector(".msg__time")) stamp(row);
-});
+caseSelect.addEventListener("change", prefillCase);
+resetButton.addEventListener("click", resetChat);
 
+log.querySelectorAll(".msg").forEach(stamp);
 syncState();
-scrollToEnd();
+loadCases();
